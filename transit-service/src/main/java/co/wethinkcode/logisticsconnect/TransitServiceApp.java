@@ -2,16 +2,127 @@ package co.wethinkcode.logisticsconnect;
 
 import io.javalin.Javalin;
 
+import java.io.IOException;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Map;
+
 public class TransitServiceApp {
 
+    private static final int PORT = 7053;
+    private static final int BASE_TRANSIT_MINUTES = 60;
+    private static final int MINUTES_PER_DELAY_STAGE = 30;
+    private static final int ARRIVAL_WINDOW_MINUTES = 30;
+
     public static void main(String[] args) {
-        Javalin app = Javalin.create().start(7053);
+        LogisticsServiceClient client =
+                new LogisticsServiceClient();
 
-        app.get("/health", ctx -> ctx.result("OK"));
+        Javalin app = Javalin.create().start(PORT);
 
-        // TODO (Calculates estimated arrival windows based on hub and delay stage.)
-        // Add domain endpoints for transit-service here.
+        app.get(
+                "/health",
+                context -> context.result("OK")
+        );
+
+        app.get(
+                "/transit/{hubId}/eta",
+                context -> {
+                    String hubId = context
+                            .pathParam("hubId")
+                            .trim()
+                            .toUpperCase();
+
+                    try {
+                        Hub hub = client.fetchHub(hubId);
+
+                        if (hub == null) {
+                            context.status(404).json(
+                                    Map.of(
+                                            "error",
+                                            "Unknown hub",
+                                            "hubId",
+                                            hubId
+                                    )
+                            );
+                            return;
+                        }
+
+                        if (!hub.active()) {
+                            context.status(409).json(
+                                    Map.of(
+                                            "error",
+                                            "Hub is inactive",
+                                            "hubId",
+                                            hubId
+                                    )
+                            );
+                            return;
+                        }
+
+                        DelayStage delayStage =
+                                client.fetchDelayStage(hubId);
+
+                        int estimatedMinutes =
+                                BASE_TRANSIT_MINUTES +
+                                        delayStage.stage() *
+                                                MINUTES_PER_DELAY_STAGE;
+
+                        Instant earliest = Instant.now()
+                                .plus(
+                                        Duration.ofMinutes(
+                                                estimatedMinutes
+                                        )
+                                );
+
+                        Instant latest = earliest.plus(
+                                Duration.ofMinutes(
+                                        ARRIVAL_WINDOW_MINUTES
+                                )
+                        );
+
+                        TransitEstimate estimate =
+                                new TransitEstimate(
+                                        hub.hubId(),
+                                        hub.sortingCenter(),
+                                        hub.province(),
+                                        delayStage.stage(),
+                                        estimatedMinutes,
+                                        earliest.toString(),
+                                        latest.toString()
+                                );
+
+                        context.json(estimate);
+
+                    } catch (IOException exception) {
+                        context.status(502).json(
+                                Map.of(
+                                        "error",
+                                        "A downstream service " +
+                                                "is unavailable",
+                                        "details",
+                                        exception.getMessage()
+                                )
+                        );
+
+                    } catch (
+                            InterruptedException exception
+                    ) {
+                        Thread.currentThread().interrupt();
+
+                        context.status(503).json(
+                                Map.of(
+                                        "error",
+                                        "Transit request interrupted"
+                                )
+                        );
+                    }
+                }
+        );
+
+        System.out.printf(
+                "Transit Service running on port %d%n",
+                PORT
+        );
     }
 }
-
-// MQ TODO: subscribes to ActiveMQ topic MqConfig.TOPIC at MqConfig.BROKER_URL (see co.wethinkcode.logisticsconnect.mq.MqConfig)
