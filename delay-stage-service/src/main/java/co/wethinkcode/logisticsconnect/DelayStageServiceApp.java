@@ -2,6 +2,8 @@ package co.wethinkcode.logisticsconnect;
 
 import io.javalin.Javalin;
 
+import javax.jms.JMSException;
+import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -14,6 +16,22 @@ public class DelayStageServiceApp {
     public static void main(String[] args) {
         Map<String, Integer> stages =
                 new ConcurrentHashMap<>();
+
+        PackageStatusPublisher publisher;
+
+        try {
+            publisher = new PackageStatusPublisher();
+        } catch (JMSException exception) {
+            System.err.println(
+                    "Could not connect to ActiveMQ: " +
+                            exception.getMessage()
+            );
+            return;
+        }
+
+        Runtime.getRuntime().addShutdownHook(
+                new Thread(publisher::close)
+        );
 
         Javalin app = Javalin.create().start(PORT);
 
@@ -89,6 +107,28 @@ public class DelayStageServiceApp {
                     }
 
                     stages.put(hubId, request.stage());
+
+                    PackageStatusEvent event =
+                            new PackageStatusEvent(
+                                    hubId,
+                                    request.stage(),
+                                    Instant.now().toString()
+                            );
+
+                    try {
+                        publisher.publish(event);
+                    } catch (Exception exception) {
+                        context.status(502).json(
+                                Map.of(
+                                        "error",
+                                        "Stage saved, but event " +
+                                                "publishing failed",
+                                        "details",
+                                        exception.getMessage()
+                                )
+                        );
+                        return;
+                    }
 
                     context.json(
                             new DelayStage(

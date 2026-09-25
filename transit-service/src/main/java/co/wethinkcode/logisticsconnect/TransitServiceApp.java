@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import javax.jms.JMSException;
 
 public class TransitServiceApp {
 
@@ -17,6 +18,22 @@ public class TransitServiceApp {
     public static void main(String[] args) {
         LogisticsServiceClient client =
                 new LogisticsServiceClient();
+
+        PackageStatusSubscriber subscriber;
+
+        try {
+            subscriber = new PackageStatusSubscriber();
+        } catch (JMSException exception) {
+            System.err.println(
+                    "Could not connect to ActiveMQ: " +
+                            exception.getMessage()
+            );
+            return;
+        }
+
+        Runtime.getRuntime().addShutdownHook(
+                new Thread(subscriber::close)
+        );
 
         Javalin app = Javalin.create().start(PORT);
 
@@ -60,12 +77,24 @@ public class TransitServiceApp {
                             return;
                         }
 
-                        DelayStage delayStage =
-                                client.fetchDelayStage(hubId);
+                        Integer delayStage =
+                                subscriber.getStage(hubId);
+
+                        if (delayStage == null) {
+                            context.status(503).json(
+                                    Map.of(
+                                            "error",
+                                            "No delay-stage event received yet",
+                                            "hubId",
+                                            hubId
+                                    )
+                            );
+                            return;
+                        }
 
                         int estimatedMinutes =
                                 BASE_TRANSIT_MINUTES +
-                                        delayStage.stage() *
+                                        delayStage *
                                                 MINUTES_PER_DELAY_STAGE;
 
                         Instant earliest = Instant.now()
@@ -86,7 +115,7 @@ public class TransitServiceApp {
                                         hub.hubId(),
                                         hub.sortingCenter(),
                                         hub.province(),
-                                        delayStage.stage(),
+                                        delayStage,
                                         estimatedMinutes,
                                         earliest.toString(),
                                         latest.toString()
