@@ -135,6 +135,12 @@ The services handle:
 - Missing delay events
 - ActiveMQ connection and publishing failures
 
+## Verification Code
+WTC-HEBGGZHG
+
+## Demo Video
+https://youtu.be/u1zhJ6_dYKM
+
 ## What I Learned
 
 This project taught me how to integrate Java microservices using synchronous REST calls and asynchronous message-based communication. I learned how to clean inconsistent CSV data, design REST contracts, use ActiveMQ topics with JMS, calculate transit estimates, and handle failures across multiple services.
